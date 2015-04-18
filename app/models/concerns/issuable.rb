@@ -13,6 +13,9 @@ module Issuable
     belongs_to :assignee, class_name: "User"
     belongs_to :milestone
     has_many :notes, as: :noteable, dependent: :destroy
+    has_many :label_links, as: :target, dependent: :destroy
+    has_many :labels, through: :label_links
+    has_many :subscriptions, dependent: :destroy, as: :subscribable
 
     validates :author, presence: true
     validates :title, presence: true, length: { within: 0..255 }
@@ -23,7 +26,12 @@ module Issuable
     scope :assigned, -> { where("assignee_id IS NOT NULL") }
     scope :unassigned, -> { where("assignee_id IS NULL") }
     scope :of_projects, ->(ids) { where(project_id: ids) }
-
+    scope :opened, -> { with_state(:opened, :reopened) }
+    scope :only_opened, -> { with_state(:opened) }
+    scope :only_reopened, -> { with_state(:reopened) }
+    scope :closed, -> { with_state(:closed) }
+    scope :order_milestone_due_desc, -> { joins(:milestone).reorder('milestones.due_date DESC, milestones.id DESC') }
+    scope :order_milestone_due_asc, -> { joins(:milestone).reorder('milestones.due_date ASC, milestones.id ASC') }
 
     delegate :name,
              :email,
@@ -36,14 +44,25 @@ module Issuable
              allow_nil: true,
              prefix: true
 
-    attr_accessor :author_id_of_changes
-
     attr_mentionable :title, :description
   end
 
   module ClassMethods
     def search(query)
-      where("title like :query", query: "%#{query}%")
+      where("LOWER(title) like :query", query: "%#{query.downcase}%")
+    end
+
+    def full_search(query)
+      where("LOWER(title) like :query OR LOWER(description) like :query", query: "%#{query.downcase}%")
+    end
+
+    def sort(method)
+      case method.to_s
+      when 'milestone_due_asc' then order_milestone_due_asc
+      when 'milestone_due_desc' then order_milestone_due_desc
+      else
+        order_by(method)
+      end
     end
   end
 
@@ -69,7 +88,7 @@ module Issuable
 
   # Return the number of -1 comments (downvotes)
   def downvotes
-    notes.select(&:downvote?).size
+    filter_superceded_votes(notes.select(&:downvote?), notes).size
   end
 
   def downvotes_in_percent
@@ -82,7 +101,7 @@ module Issuable
 
   # Return the number of +1 comments (upvotes)
   def upvotes
-    notes.select(&:upvote?).size
+    filter_superceded_votes(notes.select(&:upvote?), notes).size
   end
 
   def upvotes_in_percent
@@ -99,16 +118,72 @@ module Issuable
   end
 
   # Return all users participating on the discussion
-  def participants
+  def participants(current_user = self.author)
     users = []
     users << author
     users << assignee if is_assigned?
     mentions = []
-    mentions << self.mentioned_users
+    mentions << self.mentioned_users(current_user)
+
     notes.each do |note|
       users << note.author
-      mentions << note.mentioned_users
+      mentions << note.mentioned_users(current_user)
     end
+
     users.concat(mentions.reduce([], :|)).uniq
+  end
+
+  def subscribed?(user)
+    subscription = subscriptions.find_by_user_id(user.id)
+
+    if subscription
+      return subscription.subscribed
+    end
+
+    participants(user).include?(user)
+  end
+
+  def toggle_subscription(user)
+    subscriptions.
+      find_or_initialize_by(user_id: user.id).
+      update(subscribed: !subscribed?(user))
+  end
+
+  def to_hook_data(user)
+    {
+      object_kind: self.class.name.underscore,
+      user: user.hook_attrs,
+      object_attributes: hook_attrs
+    }
+  end
+
+  def label_names
+    labels.order('title ASC').pluck(:title)
+  end
+
+  def remove_labels
+    labels.delete_all
+  end
+
+  def add_labels_by_names(label_names)
+    label_names.each do |label_name|
+      label = project.labels.create_with(color: Label::DEFAULT_COLOR).
+        find_or_create_by(title: label_name.strip)
+      self.labels << label
+    end
+  end
+
+  private
+
+  def filter_superceded_votes(votes, notes)
+    filteredvotes = [] + votes
+
+    votes.each do |vote|
+      if vote.superceded?(notes)
+        filteredvotes.delete(vote)
+      end
+    end
+
+    filteredvotes
   end
 end

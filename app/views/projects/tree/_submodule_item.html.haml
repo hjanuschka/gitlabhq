@@ -1,11 +1,6 @@
-- url = submodule_item.url(@ref) rescue ''
-- name = submodule_item.basename
-- return '' unless url
-%tr{ class: "tree-item", url: url }
+%tr{ class: "tree-item" }
   %td.tree-item-file-name
-    = image_tag "submodule.png"
-    %strong= truncate(name, length: 40)
+    %i.fa.fa-archive.fa-fw
+    = submodule_link(submodule_item, @ref)
   %td
-    %code= submodule_item.id[0..10]
-  %td{ colspan: 2 }
-    = link_to truncate(url, length: 40), url
+  %td.hidden-xs

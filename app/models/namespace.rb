@@ -5,31 +5,36 @@
 #  id          :integer          not null, primary key
 #  name        :string(255)      not null
 #  path        :string(255)      not null
-#  owner_id    :integer          not null
-#  created_at  :datetime         not null
-#  updated_at  :datetime         not null
+#  owner_id    :integer
+#  created_at  :datetime
+#  updated_at  :datetime
 #  type        :string(255)
 #  description :string(255)      default(""), not null
+#  avatar      :string(255)
 #
 
 class Namespace < ActiveRecord::Base
+  include Sortable
   include Gitlab::ShellAdapter
-
-  attr_accessible :name, :description, :path
 
   has_many :projects, dependent: :destroy
   belongs_to :owner, class_name: "User"
 
-  validates :owner, presence: true
-  validates :name, presence: true, uniqueness: true,
-            length: { within: 0..255 },
-            format: { with: Gitlab::Regex.name_regex,
-                      message: "only letters, digits, spaces & '_' '-' '.' allowed." }
+  validates :owner, presence: true, unless: ->(n) { n.type == "Group" }
+  validates :name,
+    presence: true, uniqueness: true,
+    length: { within: 0..255 },
+    format: { with: Gitlab::Regex.namespace_name_regex,
+              message: Gitlab::Regex.namespace_name_regex_message }
+
   validates :description, length: { within: 0..255 }
-  validates :path, uniqueness: true, presence: true, length: { within: 1..255 },
-            exclusion: { in: Gitlab::Blacklist.path },
-            format: { with: Gitlab::Regex.path_regex,
-                      message: "only letters, digits & '_' '-' '.' allowed. Letter should be first" }
+  validates :path,
+    uniqueness: { case_sensitive: false },
+    presence: true,
+    length: { within: 1..255 },
+    exclusion: { in: Gitlab::Blacklist.path },
+    format: { with: Gitlab::Regex.namespace_regex,
+              message: Gitlab::Regex.namespace_regex_message }
 
   delegate :name, to: :owner, allow_nil: true, prefix: true
 
@@ -39,12 +44,37 @@ class Namespace < ActiveRecord::Base
 
   scope :root, -> { where('type IS NULL') }
 
-  def self.search query
-    where("name LIKE :query OR path LIKE :query", query: "%#{query}%")
-  end
+  class << self
+    def by_path(path)
+      where('lower(path) = :value', value: path.downcase).first
+    end
 
-  def self.global_id
-    'GLN'
+    # Case insensetive search for namespace by path or name
+    def find_by_path_or_name(path)
+      find_by("lower(path) = :path OR lower(name) = :path", path: path.downcase)
+    end
+
+    def search(query)
+      where("name LIKE :query OR path LIKE :query", query: "%#{query}%")
+    end
+
+    def clean_path(path)
+      path = path.dup
+      path.gsub!(/@.*\z/,             "")
+      path.gsub!(/\.git\z/,           "")
+      path.gsub!(/\A-+/,              "")
+      path.gsub!(/\.+\z/,             "")
+      path.gsub!(/[^a-zA-Z0-9_\-\.]/, "")
+
+      counter = 0
+      base = path
+      while Namespace.by_path(path).present?
+        counter += 1
+        path = "#{base}#{counter}"
+      end
+
+      path
+    end
   end
 
   def to_param
@@ -86,5 +116,13 @@ class Namespace < ActiveRecord::Base
 
   def send_update_instructions
     projects.each(&:send_move_instructions)
+  end
+
+  def kind
+    type == 'Group' ? 'group' : 'user'
+  end
+
+  def find_fork_of(project)
+    projects.joins(:forked_project_link).where('forked_project_links.forked_from_project_id = ?', project.id).first
   end
 end

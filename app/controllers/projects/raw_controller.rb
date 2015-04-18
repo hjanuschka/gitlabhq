@@ -2,20 +2,15 @@
 class Projects::RawController < Projects::ApplicationController
   include ExtractsPath
 
-  # Authorize
-  before_filter :authorize_read_project!
-  before_filter :authorize_code_access!
   before_filter :require_non_empty_project
+  before_filter :assign_ref_vars
+  before_filter :authorize_download_code!
 
   def show
-    @blob = Gitlab::Git::Blob.new(@repository, @commit.id, @ref, @path)
+    @blob = @repository.blob_at(@commit.id, @path)
 
-    if @blob.exists?
-      type = if @blob.mime_type =~ /html|javascript/
-               'text/plain; charset=utf-8'
-             else
-               @blob.mime_type
-             end
+    if @blob
+      type = get_blob_type
 
       headers['X-Content-Type-Options'] = 'nosniff'
 
@@ -29,5 +24,14 @@ class Projects::RawController < Projects::ApplicationController
       not_found!
     end
   end
-end
 
+  private
+
+  def get_blob_type
+    if @blob.text?
+      'text/plain; charset=utf-8'
+    else
+      'application/octet-stream'
+    end
+  end
+end

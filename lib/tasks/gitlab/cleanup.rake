@@ -84,5 +84,30 @@ namespace :gitlab do
         puts "To cleanup this directories run this command with REMOVE=true".yellow
       end
     end
+
+    desc "GITLAB | Cleanup | Block users that have been removed in LDAP"
+    task block_removed_ldap_users: :environment  do
+      warn_user_is_not_gitlab
+      block_flag = ENV['BLOCK']
+
+      User.find_each do |user|
+        next unless user.ldap_user?
+        print "#{user.name} (#{user.ldap_identity.extern_uid}) ..."
+        if Gitlab::LDAP::Access.allowed?(user)
+          puts " [OK]".green
+        else
+          if block_flag
+            user.block! unless user.blocked?
+            puts " [BLOCKED]".red
+          else
+            puts " [NOT IN LDAP]".yellow
+          end
+        end
+      end
+
+      unless block_flag
+        puts "To block these users run this command with BLOCK=true".yellow
+      end
+    end
   end
 end

@@ -1,4 +1,4 @@
-require 'gitlab/oauth/user'
+require 'gitlab/o_auth/user'
 
 # LDAP extension for User model
 #
@@ -10,84 +10,61 @@ module Gitlab
   module LDAP
     class User < Gitlab::OAuth::User
       class << self
-        def find_or_create(auth)
-          @auth = auth
-
-          if uid.blank? || email.blank?
-            raise_error("Account must provide an uid and email address")
-          end
-
-          user = find(auth)
-
-          unless user
-            # Look for user with same emails
-            #
-            # Possible cases:
-            # * When user already has account and need to link his LDAP account.
-            # * LDAP uid changed for user with same email and we need to update his uid
-            #
-            user = find_user(email)
-
-            if user
-              user.update_attributes(extern_uid: uid, provider: provider)
-              log.info("(LDAP) Updating legacy LDAP user #{email} with extern_uid => #{uid}")
-            else
-              # Create a new user inside GitLab database
-              # based on LDAP credentials
-              #
-              #
-              user = create(auth)
-            end
-          end
-
-          user
+        def find_by_uid_and_provider(uid, provider)
+          # LDAP distinguished name is case-insensitive
+          identity = ::Identity.
+            where(provider: provider).
+            where('lower(extern_uid) = ?', uid.downcase).last
+          identity && identity.user
         end
+      end
 
-        def find_user(email)
-          user = model.find_by_email(email)
+      def initialize(auth_hash)
+        super
+        update_user_attributes
+      end
 
-          # If no user found and allow_username_or_email_login is true
-          # we look for user by extracting part of his email
-          if !user && email && ldap_conf['allow_username_or_email_login']
-            uname = email.partition('@').first
-            user = model.find_by_username(uname)
-          end
+      # instance methods
+      def gl_user
+        @gl_user ||= find_by_uid_and_provider || find_by_email || build_new_user
+      end
 
-          user
-        end
+      def find_by_uid_and_provider
+        self.class.find_by_uid_and_provider(
+          auth_hash.uid.downcase, auth_hash.provider)
+      end
 
-        def authenticate(login, password)
-          # Check user against LDAP backend if user is not authenticated
-          # Only check with valid login and password to prevent anonymous bind results
-          return nil unless ldap_conf.enabled && login.present? && password.present?
+      def find_by_email
+        ::User.find_by(email: auth_hash.email)
+      end
 
-          ldap = OmniAuth::LDAP::Adaptor.new(ldap_conf)
-          ldap_user = ldap.bind_as(
-            filter: Net::LDAP::Filter.eq(ldap.uid, login),
-            size: 1,
-            password: password
-          )
+      def update_user_attributes
+        return unless persisted?
 
-          find_by_uid(ldap_user.dn) if ldap_user
-        end
+        gl_user.skip_reconfirmation!
+        gl_user.email = auth_hash.email
 
-        private
+        # Build new identity only if we dont have have same one
+        gl_user.identities.find_or_initialize_by(provider: auth_hash.provider,
+                                                 extern_uid: auth_hash.uid)
 
-        def find_by_uid(uid)
-          model.where(provider: provider, extern_uid: uid).last
-        end
+        gl_user
+      end
 
-        def provider
-          'ldap'
-        end
+      def changed?
+        gl_user.changed? || gl_user.identities.any?(&:changed?)
+      end
 
-        def raise_error(message)
-          raise OmniAuth::Error, "(LDAP) " + message
-        end
+      def block_after_signup?
+        ldap_config.block_auto_created_users
+      end
 
-        def ldap_conf
-          Gitlab.config.ldap
-        end
+      def allowed?
+        Gitlab::LDAP::Access.allowed?(gl_user)
+      end
+
+      def ldap_config
+        Gitlab::LDAP::Config.new(auth_hash.provider)
       end
     end
   end

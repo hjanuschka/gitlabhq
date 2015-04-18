@@ -2,12 +2,22 @@
 class Projects::TreeController < Projects::ApplicationController
   include ExtractsPath
 
-  # Authorize
-  before_filter :authorize_read_project!
-  before_filter :authorize_code_access!
-  before_filter :require_non_empty_project
+  before_filter :require_non_empty_project, except: [:new, :create]
+  before_filter :assign_ref_vars
+  before_filter :authorize_download_code!
 
   def show
+    if tree.entries.empty?
+      if @repository.blob_at(@commit.id, @path)
+        redirect_to(
+          namespace_project_blob_path(@project.namespace, @project,
+                                      File.join(@ref, @path))
+        ) and return
+      else
+        return not_found!
+      end
+    end
+
     respond_to do |format|
       format.html
       # Disable cache so browser history works

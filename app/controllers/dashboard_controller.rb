@@ -5,59 +5,34 @@ class DashboardController < ApplicationController
   before_filter :event_filter, only: :show
 
   def show
-    @groups = current_user.authorized_groups.sort_by(&:human_name)
-    @has_authorized_projects = @projects.count > 0
-    @projects_count = @projects.count
-    @projects = @projects.limit(20)
-
-    @events = Event.in_projects(current_user.authorized_projects.pluck(:id))
-    @events = @event_filter.apply_filter(@events)
-    @events = @events.limit(20).offset(params[:offset] || 0)
-
+    @projects = @projects.includes(:namespace)
     @last_push = current_user.recent_push
 
     respond_to do |format|
       format.html
-      format.js
-      format.atom { render layout: false }
+
+      format.json do
+        load_events
+        pager_json("events/_events", @events.count)
+      end
+
+      format.atom do
+        load_events
+        render layout: false
+      end
     end
   end
 
-  def projects
-    @projects = case params[:scope]
-                when 'personal' then
-                  current_user.namespace.projects
-                when 'joined' then
-                  current_user.authorized_projects.joined(current_user)
-                when 'owned' then
-                  current_user.owned_projects
-                else
-                  current_user.authorized_projects
-                end
-
-    @projects = @projects.where(namespace_id: Group.find_by_name(params[:group])) if params[:group].present?
-    @projects = @projects.includes(:namespace).sorted_by_activity
-
-    @labels = current_user.authorized_projects.tags_on(:labels)
-    @groups = current_user.authorized_groups
-
-    @projects = @projects.tagged_with(params[:label]) if params[:label].present?
-    @projects = @projects.page(params[:page]).per(30)
-  end
-
-  # Get authored or assigned open merge requests
   def merge_requests
-    @merge_requests = current_user.cared_merge_requests
-    @merge_requests = FilterContext.new(@merge_requests, params).execute
-    @merge_requests = @merge_requests.recent.page(params[:page]).per(20)
+    @merge_requests = get_merge_requests_collection
+    @merge_requests = @merge_requests.page(params[:page]).per(PER_PAGE)
+    @merge_requests = @merge_requests.preload(:author, :target_project)
   end
 
-  # Get only assigned issues
   def issues
-    @issues = current_user.assigned_issues
-    @issues = FilterContext.new(@issues, params).execute
-    @issues = @issues.recent.page(params[:page]).per(20)
-    @issues = @issues.includes(:author, :project)
+    @issues = get_issues_collection
+    @issues = @issues.page(params[:page]).per(PER_PAGE)
+    @issues = @issues.preload(:author, :project)
 
     respond_to do |format|
       format.html
@@ -68,6 +43,12 @@ class DashboardController < ApplicationController
   protected
 
   def load_projects
-    @projects = current_user.authorized_projects.sorted_by_activity
+    @projects = current_user.authorized_projects.sorted_by_activity.non_archived
+  end
+
+  def load_events
+    @events = Event.in_projects(current_user.authorized_projects.pluck(:id))
+    @events = @event_filter.apply_filter(@events).with_associations
+    @events = @events.limit(20).offset(params[:offset] || 0)
   end
 end

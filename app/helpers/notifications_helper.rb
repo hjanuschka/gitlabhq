@@ -1,13 +1,13 @@
 module NotificationsHelper
   def notification_icon(notification)
     if notification.disabled?
-      content_tag :i, nil, class: 'icon-circle cred'
+      icon('volume-off', class: 'ns-mute')
     elsif notification.participating?
-      content_tag :i, nil, class: 'icon-circle cblue'
+      icon('volume-down', class: 'ns-part')
     elsif notification.watch?
-      content_tag :i, nil, class: 'icon-circle cgreen'
+      icon('volume-up', class: 'ns-watch')
     else
-      content_tag :i, nil, class: 'icon-circle-blank cblue'
+      icon('circle-o', class: 'ns-default')
     end
   end
 end

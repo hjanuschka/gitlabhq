@@ -1,14 +1,14 @@
 class Projects::BranchesController < Projects::ApplicationController
+  include ActionView::Helpers::SanitizeHelper
   # Authorize
-  before_filter :authorize_read_project!
   before_filter :require_non_empty_project
-
-  before_filter :authorize_code_access!
-  before_filter :authorize_push!, only: [:create]
-  before_filter :authorize_admin_project!, only: [:destroy]
+  before_filter :authorize_download_code!
+  before_filter :authorize_push_code!, only: [:create, :destroy]
 
   def index
-    @branches = Kaminari.paginate_array(@repository.branches).page(params[:page]).per(30)
+    @sort = params[:sort] || 'name'
+    @branches = @repository.branches_sorted_by(@sort)
+    @branches = Kaminari.paginate_array(@branches).page(params[:page]).per(PER_PAGE)
   end
 
   def recent
@@ -16,25 +16,31 @@ class Projects::BranchesController < Projects::ApplicationController
   end
 
   def create
-    @repository.add_branch(params[:branch_name], params[:ref])
+    branch_name = sanitize(strip_tags(params[:branch_name]))
+    ref = sanitize(strip_tags(params[:ref]))
+    result = CreateBranchService.new(project, current_user).
+        execute(branch_name, ref)
 
-    if new_branch = @repository.find_branch(params[:branch_name])
-      Event.create_ref_event(@project, current_user, new_branch, 'add')
+    if result[:status] == :success
+      @branch = result[:branch]
+      redirect_to namespace_project_tree_path(@project.namespace, @project,
+                                              @branch.name)
+    else
+      @error = result[:message]
+      render action: 'new'
     end
-
-    redirect_to project_branches_path(@project)
   end
 
   def destroy
-    branch = @repository.find_branch(params[:id])
-
-    if branch && @repository.rm_branch(branch.name)
-      Event.create_ref_event(@project, current_user, branch, 'rm')
-    end
+    DeleteBranchService.new(project, current_user).execute(params[:id])
+    @branch_name = params[:id]
 
     respond_to do |format|
-      format.html { redirect_to project_branches_path(@project) }
-      format.js { render nothing: true }
+      format.html do
+        redirect_to namespace_project_branches_path(@project.namespace,
+                                                    @project)
+      end
+      format.js
     end
   end
 end

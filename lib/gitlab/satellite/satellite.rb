@@ -1,7 +1,14 @@
 module Gitlab
-  class SatelliteNotExistError < StandardError;  end
-
   module Satellite
+    autoload :DeleteFileAction, 'gitlab/satellite/files/delete_file_action'
+    autoload :EditFileAction,   'gitlab/satellite/files/edit_file_action'
+    autoload :FileAction,       'gitlab/satellite/files/file_action'
+    autoload :NewFileAction,    'gitlab/satellite/files/new_file_action'
+
+    class CheckoutFailed < StandardError; end
+    class CommitFailed < StandardError; end
+    class PushFailed < StandardError; end
+
     class Satellite
       include Gitlab::Popen
 
@@ -13,18 +20,13 @@ module Gitlab
         @project = project
       end
 
-      def log message
+      def log(message)
         Gitlab::Satellite::Logger.error(message)
       end
 
-      def raise_no_satellite
-        raise SatelliteNotExistError.new("Satellite doesn't exist")
-      end
-
       def clear_and_update!
-        raise_no_satellite unless exists?
+        project.ensure_satellite_exists
 
-        File.exists? path
         @repo = nil
         clear_working_dir!
         delete_heads!
@@ -33,7 +35,7 @@ module Gitlab
       end
 
       def create
-        output, status = popen("git clone #{project.repository.path_to_repo} #{path}",
+        output, status = popen(%W(git clone -- #{project.repository.path_to_repo} #{path}),
                                Gitlab.config.satellites.path)
 
         log("PID: #{project.id}: git clone #{project.repository.path_to_repo} #{path}")
@@ -55,12 +57,12 @@ module Gitlab
       # * Changes the current directory to the satellite's working dir
       # * Yields
       def lock
-        raise_no_satellite unless exists?
+        project.ensure_satellite_exists
 
         File.open(lock_file, "w+") do |f|
           begin
             f.flock File::LOCK_EX
-            Dir.chdir(path) { return yield }
+            yield
           ensure
             f.flock File::LOCK_UN
           end
@@ -77,7 +79,7 @@ module Gitlab
       end
 
       def repo
-        raise_no_satellite unless exists?
+        project.ensure_satellite_exists
 
         @repo ||= Grit::Repo.new(path)
       end
@@ -91,6 +93,7 @@ module Gitlab
       # Clear the working directory
       def clear_working_dir!
         repo.git.reset(hard: true)
+        repo.git.clean(f: true, d: true, x: true)
       end
 
       # Deletes all branches except the parking branch
@@ -101,16 +104,12 @@ module Gitlab
         heads = repo.heads.map(&:name)
 
         # update or create the parking branch
-        if heads.include? PARKING_BRANCH
-          repo.git.checkout({}, PARKING_BRANCH)
-        else
-          repo.git.checkout(default_options({b: true}), PARKING_BRANCH)
-        end
+        repo.git.checkout(default_options({ B: true }), PARKING_BRANCH)
 
         # remove the parking branch from the list of heads ...
         heads.delete(PARKING_BRANCH)
         # ... and delete all others
-        heads.each { |head| repo.git.branch(default_options({D: true}), head) }
+        heads.each { |head| repo.git.branch(default_options({ D: true }), head) }
       end
 
       # Deletes all remotes except origin
@@ -123,15 +122,16 @@ module Gitlab
         remotes.each { |name| repo.git.remote(default_options,'rm', name)}
       end
 
-      # Updates the satellite from Gitolite
+      # Updates the satellite from bare repo
       #
       # Note: this will only update remote branches (i.e. origin/*)
       def update_from_source!
+        repo.git.remote(default_options, 'set-url', :origin, project.repository.path_to_repo)
         repo.git.fetch(default_options, :origin)
       end
 
       def default_options(options = {})
-        {raise: true, timeout: true}.merge(options)
+        { raise: true, timeout: true }.merge(options)
       end
 
       # Create directory for storing

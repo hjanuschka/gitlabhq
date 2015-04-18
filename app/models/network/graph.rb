@@ -6,7 +6,7 @@ module Network
       @max_count ||= 650
     end
 
-    def initialize project, ref, commit, filter_ref
+    def initialize(project, ref, commit, filter_ref)
       @project = project
       @ref = ref
       @commit = commit
@@ -84,7 +84,7 @@ module Network
             skip += self.class.max_count
           end
         else
-          # Cant't find the target commit in the repo.
+          # Can't find the target commit in the repo.
           offset = 0
         end
       end
@@ -178,12 +178,6 @@ module Network
       space = find_free_space(time_range, 2, space_base)
       leaves.each do |l|
         l.spaces << space
-        # Also add space to parent
-        l.parents(@map).each do |parent|
-          if 0 < parent.space && parent.space < space
-            parent.spaces << space
-          end
-        end
       end
 
       # and mark it as reserved
@@ -232,7 +226,7 @@ module Network
 
       reserved = []
       for day in time_range
-        reserved += @reserved[day]
+        reserved.push(*@reserved[day])
       end
       reserved.uniq!
 

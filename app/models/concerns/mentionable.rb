@@ -10,7 +10,7 @@ module Mentionable
 
   module ClassMethods
     # Indicate which attributes of the Mentionable to search for GFM references.
-    def attr_mentionable *attrs
+    def attr_mentionable(*attrs)
       mentionable_attrs.concat(attrs.map(&:to_s))
     end
 
@@ -38,37 +38,30 @@ module Mentionable
 
   # Determine whether or not a cross-reference Note has already been created between this Mentionable and
   # the specified target.
-  def has_mentioned? target
+  def has_mentioned?(target)
     Note.cross_reference_exists?(target, local_reference)
   end
 
-  def mentioned_users
-    users = []
-    return users if mentionable_text.blank?
-    has_project = self.respond_to? :project
-    matches = mentionable_text.scan(/@[a-zA-Z][a-zA-Z0-9_\-\.]*/)
-    matches.each do |match|
-      identifier = match.delete "@"
-      if has_project
-        id = project.team.members.find { |u| u.username == identifier }.try(:id)
-      else
-        id = User.where(username: identifier).pluck(:id).first
-      end
-      users << User.find(id) unless id.blank?
-    end
-    users.uniq
+  def mentioned_users(current_user = nil)
+    return [] if mentionable_text.blank?
+
+    ext = Gitlab::ReferenceExtractor.new(self.project, current_user)
+    ext.analyze(mentionable_text)
+    ext.users.uniq
   end
 
   # Extract GFM references to other Mentionables from this Mentionable. Always excludes its #local_reference.
-  def references p = project, text = mentionable_text
+  def references(p = project, current_user = self.author, text = mentionable_text)
     return [] if text.blank?
-    ext = Gitlab::ReferenceExtractor.new
+
+    ext = Gitlab::ReferenceExtractor.new(p, current_user)
     ext.analyze(text)
-    (ext.issues_for(p) + ext.merge_requests_for(p) + ext.commits_for(p)).uniq - [local_reference]
+
+    (ext.issues + ext.merge_requests + ext.commits).uniq - [local_reference]
   end
 
   # Create a cross-reference Note for each GFM reference to another Mentionable found in +mentionable_text+.
-  def create_cross_references! p = project, a = author, without = []
+  def create_cross_references!(p = project, a = author, without = [])
     refs = references(p) - without
     refs.each do |ref|
       Note.create_cross_reference_note(ref, local_reference, a, p)
@@ -77,7 +70,7 @@ module Mentionable
 
   # If the mentionable_text field is about to change, locate any *added* references and create cross references for
   # them. Invoke from an observer's #before_save implementation.
-  def notice_added_references p = project, a = author
+  def notice_added_references(p = project, a = author)
     ch = changed_attributes
     original, mentionable_changed = "", false
     self.class.mentionable_attrs.each do |attr|
@@ -90,8 +83,7 @@ module Mentionable
     # Only proceed if the saved changes actually include a chance to an attr_mentionable field.
     return unless mentionable_changed
 
-    preexisting = references(p, original)
+    preexisting = references(p, self.author, original)
     create_cross_references!(p, a, preexisting)
   end
-
 end

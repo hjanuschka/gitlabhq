@@ -1,29 +1,9 @@
 module DashboardHelper
-  def filter_path(entity, options={})
-    exist_opts = {
-      status: params[:status],
-      project_id: params[:project_id],
-    }
-
-    options = exist_opts.merge(options)
-
-    path = request.path
-    path << "?#{options.to_param}"
-    path
+  def assigned_issues_dashboard_path
+    issues_dashboard_path(assignee_id: current_user.id)
   end
 
-  def entities_per_project project, entity
-    items = project.items_for(entity)
-
-    items = case params[:status]
-            when 'closed'
-              items.closed
-            when 'all'
-              items
-            else
-              items.opened
-            end
-
-    items.cared(current_user).count
+  def assigned_mrs_dashboard_path
+    merge_requests_dashboard_path(assignee_id: current_user.id)
   end
 end

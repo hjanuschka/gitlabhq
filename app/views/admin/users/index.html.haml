@@ -1,10 +1,8 @@
 .row
-  .span3
+  = link_to '#aside', class: 'show-aside' do
+    %i.fa.fa-angle-left
+  %aside.col-md-3
     .admin-filter
-      = form_tag admin_users_path, method: :get, class: 'form-inline' do
-        = search_field_tag :name, params[:name], placeholder: 'Name, email or username', class: 'search-text-input span2'
-        = button_tag type: 'submit', class: 'btn' do
-          %i.icon-search
       %ul.nav.nav-pills.nav-stacked
         %li{class: "#{'active' unless params[:filter]}"}
           = link_to admin_users_path do
@@ -23,36 +21,68 @@
             Without projects
             %small.pull-right= User.without_projects.count
       %hr
+      = form_tag admin_users_path, method: :get, class: 'form-inline' do
+        .form-group
+          = search_field_tag :name, params[:name], placeholder: 'Name, email or username', class: 'form-control'
+        = button_tag class: 'btn btn-primary' do
+          %i.fa.fa-search
+      %hr
       = link_to 'Reset', admin_users_path, class: "btn btn-cancel"
 
-  .span9
-    .ui-box
-      .title
+  %section.col-md-9
+    .panel.panel-default
+      .panel-heading
         Users (#{@users.total_count})
-        .pull-right
-          = link_to 'New User', new_admin_user_path, class: "btn btn-new"
+        .panel-head-actions
+          .dropdown.inline
+            %a.dropdown-toggle.btn.btn-sm{href: '#', "data-toggle" => "dropdown"}
+              %span.light sort:
+              - if @sort.present?
+                = sort_options_hash[@sort]
+              - else
+                = sort_title_name
+              %b.caret
+            %ul.dropdown-menu
+              %li
+                = link_to admin_users_path(sort: sort_value_name) do
+                  = sort_title_name
+                = link_to admin_users_path(sort: sort_value_recently_signin) do
+                  = sort_title_recently_signin
+                = link_to admin_users_path(sort: sort_value_oldest_signin) do
+                  = sort_title_oldest_signin
+                = link_to admin_users_path(sort: sort_value_recently_created) do
+                  = sort_title_recently_created
+                = link_to admin_users_path(sort: sort_value_oldest_created) do
+                  = sort_title_oldest_created
+                = link_to admin_users_path(sort: sort_value_recently_updated) do
+                  = sort_title_recently_updated
+                = link_to admin_users_path(sort: sort_value_oldest_updated) do
+                  = sort_title_oldest_updated
+
+          = link_to 'New User', new_admin_user_path, class: "btn btn-new btn-sm"
       %ul.well-list
         - @users.each do |user|
           %li
-            - if user.blocked?
-              %i.icon-lock.cred
-            - else
-              %i.icon-user.cgreen
-            = link_to user.name, [:admin, user]
-            - if user.admin?
-              %strong.cred (Admin)
-            - if user == current_user
-              %span.cred It's you!
+            .list-item-name
+              - if user.blocked?
+                %i.fa.fa-lock.cred
+              - else
+                %i.fa.fa-user.cgreen
+              = link_to user.name, [:admin, user]
+              - if user.admin?
+                %strong.cred (Admin)
+              - if user == current_user
+                %span.cred It's you!
             .pull-right
               %span.light
-                %i.icon-envelope
+                %i.fa.fa-envelope
                 = mail_to user.email, user.email, class: 'light'
               &nbsp;
-              = link_to 'Edit', edit_admin_user_path(user), id: "edit_#{dom_id(user)}", class: "btn btn-small"
+              = link_to 'Edit', edit_admin_user_path(user), id: "edit_#{dom_id(user)}", class: "btn btn-sm"
               - unless user == current_user
                 - if user.blocked?
-                  = link_to 'Unblock', unblock_admin_user_path(user), method: :put, class: "btn btn-small success"
+                  = link_to 'Unblock', unblock_admin_user_path(user), method: :put, class: "btn btn-sm success"
                 - else
-                  = link_to 'Block', block_admin_user_path(user), confirm: 'USER WILL BE BLOCKED! Are you sure?', method: :put, class: "btn btn-small btn-remove"
-                = link_to 'Destroy', [:admin, user], confirm: "USER #{user.name} WILL BE REMOVED! Are you sure?", method: :delete, class: "btn btn-small btn-remove"
+                  = link_to 'Block', block_admin_user_path(user), data: {confirm: 'USER WILL BE BLOCKED! Are you sure?'}, method: :put, class: "btn btn-sm btn-remove"
+                = link_to 'Destroy', [:admin, user], data: { confirm: "USER #{user.name} WILL BE REMOVED! All tickets linked to this user will also be removed! Maybe block the user instead? Are you sure?" }, method: :delete, class: "btn btn-sm btn-remove"
     = paginate @users, theme: "gitlab"

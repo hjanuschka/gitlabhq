@@ -5,8 +5,9 @@ module ApplicationHelper
   COLOR_SCHEMES = {
     1 => 'white',
     2 => 'dark',
-    3 => 'solarized-dark',
-    4 => 'monokai',
+    3 => 'solarized-light',
+    4 => 'solarized-dark',
+    5 => 'monokai',
   }
   COLOR_SCHEMES.default = 'white'
 
@@ -49,87 +50,86 @@ module ApplicationHelper
     args.any? { |v| v.to_s.downcase == action_name }
   end
 
-  def gravatar_icon(user_email = '', size = nil)
-    size = 40 if size.nil? || size <= 0
+  def project_icon(project_id, options = {})
+    project =
+      if project_id.is_a?(Project)
+        project = project_id
+      else
+        Project.find_with_namespace(project_id)
+      end
 
-    if !Gitlab.config.gravatar.enabled || user_email.blank?
-      'no_avatar.png'
-    else
-      gravatar_url = request.ssl? || gitlab_config.https ? Gitlab.config.gravatar.ssl_url : Gitlab.config.gravatar.plain_url
-      user_email.strip!
-      sprintf gravatar_url, hash: Digest::MD5.hexdigest(user_email.downcase), size: size
+    if project.avatar_url
+      image_tag project.avatar_url, options
+    else # generated icon
+      project_identicon(project, options)
     end
+  end
+
+  def project_identicon(project, options = {})
+    allowed_colors = {
+      red: 'FFEBEE',
+      purple: 'F3E5F5',
+      indigo: 'E8EAF6',
+      blue: 'E3F2FD',
+      teal: 'E0F2F1',
+      orange: 'FBE9E7',
+      gray: 'EEEEEE'
+    }
+
+    options[:class] ||= ''
+    options[:class] << ' identicon'
+    bg_key = project.id % 7
+    style = "background-color: ##{ allowed_colors.values[bg_key] }; color: #555"
+
+    content_tag(:div, class: options[:class], style: style) do
+      project.name[0, 1].upcase
+    end
+  end
+
+  def avatar_icon(user_email = '', size = nil)
+    user = User.find_by(email: user_email)
+
+    if user
+      user.avatar_url(size) || default_avatar
+    else
+      gravatar_icon(user_email, size)
+    end
+  end
+
+  def gravatar_icon(user_email = '', size = nil)
+    GravatarService.new.execute(user_email, size) ||
+      default_avatar
+  end
+
+  def default_avatar
+    image_path('no_avatar.png')
   end
 
   def last_commit(project)
     if project.repo_exists?
-      time_ago_in_words(project.repository.commit.committed_date) + " ago"
+      time_ago_with_tooltip(project.repository.commit.committed_date)
     else
-      "Never"
+      'Never'
     end
   rescue
-    "Never"
+    'Never'
   end
 
-  def grouped_options_refs(destination = :tree)
+  def grouped_options_refs
     repository = @project.repository
 
     options = [
-      ["Branch", repository.branch_names ],
-      [ "Tag", repository.tag_names ]
+      ['Branches', repository.branch_names],
+      ['Tags', VersionSorter.rsort(repository.tag_names)]
     ]
 
-    # If reference is commit id -
-    # we should add it to branch/tag selectbox
+    # If reference is commit id - we should add it to branch/tag selectbox
     if(@ref && !options.flatten.include?(@ref) &&
-       @ref =~ /^[0-9a-zA-Z]{6,52}$/)
-      options << ["Commit", [@ref]]
+       @ref =~ /\A[0-9a-zA-Z]{6,52}\z/)
+      options << ['Commit', [@ref]]
     end
 
     grouped_options_for_select(options, @ref || @project.default_branch)
-  end
-
-  def search_autocomplete_source
-    projects = current_user.authorized_projects.map { |p| { label: "project: #{simple_sanitize(p.name_with_namespace)}", url: project_path(p) } }
-    groups = current_user.authorized_groups.map { |group| { label: "group: #{simple_sanitize(group.name)}", url: group_path(group) } }
-
-    default_nav = [
-      { label: "My Profile", url: profile_path },
-      { label: "My SSH Keys", url: profile_keys_path },
-      { label: "My Dashboard", url: root_path },
-      { label: "Admin Section", url: admin_root_path },
-    ]
-
-    help_nav = [
-      { label: "help: API Help", url: help_api_path },
-      { label: "help: Markdown Help", url: help_markdown_path },
-      { label: "help: Permissions Help", url: help_permissions_path },
-      { label: "help: Public Access Help", url: help_public_access_path },
-      { label: "help: Rake Tasks Help", url: help_raketasks_path },
-      { label: "help: SSH Keys Help", url: help_ssh_path },
-      { label: "help: System Hooks Help", url: help_system_hooks_path },
-      { label: "help: Web Hooks Help", url: help_web_hooks_path },
-      { label: "help: Workflow Help", url: help_workflow_path },
-    ]
-
-    project_nav = []
-    if @project && @project.repository.exists? && @project.repository.root_ref
-      project_nav = [
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Files",    url: project_tree_path(@project, @ref || @project.repository.root_ref) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Commits",  url: project_commits_path(@project, @ref || @project.repository.root_ref) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Network",  url: project_network_path(@project, @ref || @project.repository.root_ref) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Graph",    url: project_graph_path(@project, @ref || @project.repository.root_ref) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Issues",   url: project_issues_path(@project) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Merge Requests", url: project_merge_requests_path(@project) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Milestones", url: project_milestones_path(@project) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Snippets", url: project_snippets_path(@project) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Team",     url: project_team_index_path(@project) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Wall",     url: project_wall_path(@project) },
-        { label: "#{simple_sanitize(@project.name_with_namespace)} - Wiki",     url: project_wikis_path(@project) },
-      ]
-    end
-
-    [groups, projects, default_nav, project_nav, help_nav].flatten.to_json
   end
 
   def emoji_autocomplete_source
@@ -140,6 +140,10 @@ module ApplicationHelper
 
   def app_theme
     Gitlab::Theme.css_class_by_id(current_user.try(:theme_id))
+  end
+
+  def theme_type
+    Gitlab::Theme.type_css_class_by_id(current_user.try(:theme_id))
   end
 
   def user_color_scheme_class
@@ -160,6 +164,9 @@ module ApplicationHelper
     # Skip if user already created appropriate MR
     return false if project.merge_requests.where(source_branch: event.branch_name).opened.any?
 
+    # Skip if user removed branch right after that
+    return false unless project.repository.branch_names.include?(event.branch_name)
+
     true
   end
 
@@ -167,45 +174,15 @@ module ApplicationHelper
     Digest::SHA1.hexdigest string
   end
 
-  def project_last_activity project
-    if project.last_activity_at
-      time_ago_in_words(project.last_activity_at) + " ago"
-    else
-      "Never"
-    end
-  end
-
-  def authbutton(provider, size = 64)
-    file_name = "#{provider.to_s.split('_').first}_#{size}.png"
-    image_tag("authbuttons/#{file_name}",
-              alt: "Sign in with #{provider.to_s.titleize}")
-  end
-
-  def simple_sanitize str
+  def simple_sanitize(str)
     sanitize(str, tags: %w(a span))
-  end
-
-  def image_url(source)
-    # prevent relative_root_path being added twice (it's part of root_url and path_to_image)
-    root_url.sub(/#{root_path}$/, path_to_image(source))
-  end
-
-  alias_method :url_to_image, :image_url
-
-  def users_select_tag(id, opts = {})
-    css_class = "ajax-users-select "
-    css_class << "multiselect " if opts[:multiple]
-    css_class << (opts[:class] || '')
-    value = opts[:selected] || ''
-
-    hidden_field_tag(id, value, class: css_class)
   end
 
   def body_data_page
     path = controller.controller_path.split('/')
     namespace = path.first if path.second
 
-    [namespace, controller.controller_name, controller.action_name].compact.join(":")
+    [namespace, controller.controller_name, controller.action_name].compact.join(':')
   end
 
   # shortcut for gitlab config
@@ -218,28 +195,131 @@ module ApplicationHelper
     Gitlab.config.extra
   end
 
-  def public_icon
-    content_tag :i, nil, class: 'icon-globe cblue'
-  end
-
-  def private_icon
-    content_tag :i, nil, class: 'icon-lock cgreen'
-  end
-
   def search_placeholder
     if @project && @project.persisted?
-      "Search in this project"
+      'Search in this project'
+    elsif @snippet || @snippets || @show_snippets
+      'Search snippets'
     elsif @group && @group.persisted?
-      "Search in this group"
+      'Search in this group'
     else
-      "Search"
+      'Search'
     end
   end
 
-  def first_line(str)
-    lines = str.split("\n")
-    line = lines.first
-    line += "..." if lines.size > 1
-    line
+  def broadcast_message
+    BroadcastMessage.current
+  end
+
+  def time_ago_with_tooltip(date, placement = 'top', html_class = 'time_ago')
+    capture_haml do
+      haml_tag :time, date.to_s,
+        class: html_class, datetime: date.getutc.iso8601, title: date.stamp('Aug 21, 2011 9:23pm'),
+        data: { toggle: 'tooltip', placement: placement }
+
+      haml_tag :script, "$('." + html_class + "').timeago().tooltip()"
+    end.html_safe
+  end
+
+  def render_markup(file_name, file_content)
+    GitHub::Markup.render(file_name, file_content).
+      force_encoding(file_content.encoding).html_safe
+  rescue RuntimeError
+    simple_format(file_content)
+  end
+
+  def markup?(filename)
+    Gitlab::MarkdownHelper.markup?(filename)
+  end
+
+  def gitlab_markdown?(filename)
+    Gitlab::MarkdownHelper.gitlab_markdown?(filename)
+  end
+
+  # Overrides ActionView::Helpers::UrlHelper#link_to to add `rel="nofollow"` to
+  # external links
+  def link_to(name = nil, options = nil, html_options = {})
+    if options.kind_of?(String)
+      if !options.start_with?('#', '/')
+        html_options = add_nofollow(options, html_options)
+      end
+    end
+
+    super
+  end
+
+  # Add `"rel=nofollow"` to external links
+  #
+  # link         - String link to check
+  # html_options - Hash of `html_options` passed to `link_to`
+  #
+  # Returns `html_options`, adding `rel: nofollow` for external links
+  def add_nofollow(link, html_options = {})
+    uri = URI(link)
+
+    if uri && uri.absolute? && uri.host != Gitlab.config.gitlab.host
+      rel = html_options.fetch(:rel, '')
+      html_options[:rel] = (rel + ' nofollow').strip
+    end
+
+    html_options
+  end
+
+  def escaped_autolink(text)
+    auto_link ERB::Util.html_escape(text), link: :urls
+  end
+
+  def promo_host
+    'about.gitlab.com'
+  end
+
+  def promo_url
+    'https://' + promo_host
+  end
+
+  def page_filter_path(options = {})
+    without = options.delete(:without)
+
+    exist_opts = {
+      state: params[:state],
+      scope: params[:scope],
+      label_name: params[:label_name],
+      milestone_id: params[:milestone_id],
+      assignee_id: params[:assignee_id],
+      author_id: params[:author_id],
+      sort: params[:sort],
+    }
+
+    options = exist_opts.merge(options)
+
+    if without.present?
+      without.each do |key|
+        options.delete(key)
+      end
+    end
+
+    path = request.path
+    path << "?#{options.to_param}"
+    path
+  end
+
+  def outdated_browser?
+    browser.ie? && browser.version.to_i < 10
+  end
+
+  def path_to_key(key, admin = false)
+    if admin
+      admin_user_key_path(@user, key)
+    else
+      profile_key_path(key)
+    end
+  end
+
+  def nav_sidebar_class
+    if nav_menu_collapsed?
+      "page-sidebar-collapsed"
+    else
+      "page-sidebar-expanded"
+    end
   end
 end

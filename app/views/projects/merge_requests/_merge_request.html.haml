@@ -1,37 +1,48 @@
 %li{ class: mr_css_classes(merge_request) }
   .merge-request-title
-    %span.light= "##{merge_request.iid}"
-    = link_to_gfm truncate(merge_request.title, length: 80), project_merge_request_path(merge_request.target_project, merge_request), class: "row_title"
-    - if merge_request.merged?
-      %small.pull-right
-        %i.icon-ok
-        = "MERGED"
-    - else
-      %span.pull-right
-        - if merge_request.for_fork?
-          %span.light
-            = "#{merge_request.source_project.path_with_namespace}"
-          = "#{merge_request.source_branch}"
-          %i.icon-angle-right.light
-          = "#{merge_request.target_branch}"
-        - else
-          = "#{merge_request.source_branch}"
-          %i.icon-angle-right.light
-          = "#{merge_request.target_branch}"
+    %span.str-truncated
+      = link_to_gfm merge_request.title, merge_request_path(merge_request), class: "row_title"
+    .pull-right.light
+      - if merge_request.merged?
+        %span
+          %i.fa.fa-check
+          MERGED
+      - elsif merge_request.closed?
+        %span
+          %i.fa.fa-close
+          CLOSED
+      - else
+        %span.hidden-xs.hidden-sm
+          %span.label-branch<
+            %i.fa.fa-code-fork
+            %span= merge_request.target_branch
+      - note_count = merge_request.mr_and_commit_notes.user.count
+      - if note_count > 0
+        &nbsp;
+        %span
+          %i.fa.fa-comments
+          = note_count
   .merge-request-info
-    - if merge_request.author
-      authored by #{link_to_member(merge_request.source_project, merge_request.author)}
+    = link_to "##{merge_request.iid}", merge_request_path(merge_request), class: "light"
+    - if merge_request.assignee
+      assigned to #{link_to_member(merge_request.source_project, merge_request.assignee)}
+    - else
+      Unassigned
     - if merge_request.votes_count > 0
       = render 'votes/votes_inline', votable: merge_request
-    - if merge_request.notes.any?
-      %span
-        %i.icon-comments
-        = merge_request.mr_and_commit_notes.count
     - if merge_request.milestone_id?
       %span
-        %i.icon-time
+        %i.fa.fa-clock-o
         = merge_request.milestone.title
+    - if merge_request.tasks?
+      %span.task-status
+        = merge_request.task_status
 
 
-    .pull-right
-      %small updated #{time_ago_in_words(merge_request.updated_at)} ago
+    .pull-right.hidden-xs
+      %small updated #{time_ago_with_tooltip(merge_request.updated_at, 'bottom', 'merge_request_updated_ago')}
+
+    .merge-request-labels
+      - merge_request.labels.each do |label|
+        = link_to namespace_project_merge_requests_path(merge_request.project.namespace, merge_request.project, label_name: label.name) do
+          = render_colored_label(label)

@@ -2,18 +2,20 @@ class Admin::UsersController < Admin::ApplicationController
   before_filter :user, only: [:show, :edit, :update, :destroy]
 
   def index
-    @users = User.scoped
-    @users = @users.filter(params[:filter])
+    @users = User.order_name_asc.filter(params[:filter])
     @users = @users.search(params[:name]) if params[:name].present?
-    @users = @users.alphabetically.page(params[:page])
+    @users = @users.sort(@sort = params[:sort])
+    @users = @users.page(params[:page])
   end
 
   def show
-    @projects = user.authorized_projects
+    @personal_projects = user.personal_projects
+    @joined_projects = user.projects.joined(@user)
+    @keys = user.keys
   end
 
   def new
-    @user = User.build_user
+    @user = User.new
   end
 
   def edit
@@ -22,7 +24,7 @@ class Admin::UsersController < Admin::ApplicationController
 
   def block
     if user.block
-      redirect_to :back, alert: "Successfully blocked"
+      redirect_to :back, notice: "Successfully blocked"
     else
       redirect_to :back, alert: "Error occurred. User was not blocked"
     end
@@ -30,23 +32,23 @@ class Admin::UsersController < Admin::ApplicationController
 
   def unblock
     if user.activate
-      redirect_to :back, alert: "Successfully unblocked"
+      redirect_to :back, notice: "Successfully unblocked"
     else
       redirect_to :back, alert: "Error occurred. User was not unblocked"
     end
   end
 
   def create
-    admin = params[:user].delete("admin")
-
     opts = {
       force_random_password: true,
-      password_expires_at: Time.now
+      password_expires_at: nil
     }
 
-    @user = User.build_user(params[:user].merge(opts), as: :admin)
-    @user.admin = (admin && admin.to_i > 0)
+    @user = User.new(user_params.merge(opts))
     @user.created_by_id = current_user.id
+    @user.generate_password
+    @user.generate_reset_token
+    @user.skip_confirmation!
 
     respond_to do |format|
       if @user.save
@@ -60,17 +62,18 @@ class Admin::UsersController < Admin::ApplicationController
   end
 
   def update
-    admin = params[:user].delete("admin")
+    user_params_with_pass = user_params.dup
 
-    if params[:user][:password].blank?
-      params[:user].delete(:password)
-      params[:user].delete(:password_confirmation)
+    if params[:user][:password].present?
+      user_params_with_pass.merge!(
+        password: params[:user][:password],
+        password_confirmation: params[:user][:password_confirmation],
+      )
     end
 
-    user.admin = (admin && admin.to_i > 0)
-
     respond_to do |format|
-      if user.update_attributes(params[:user], as: :admin)
+      user.skip_reconfirmation!
+      if user.update_attributes(user_params_with_pass)
         format.html { redirect_to [:admin, user], notice: 'User was successfully updated.' }
         format.json { head :ok }
       else
@@ -95,9 +98,31 @@ class Admin::UsersController < Admin::ApplicationController
     end
   end
 
+  def remove_email
+    email = user.emails.find(params[:email_id])
+    email.destroy
+
+    user.set_notification_email
+    user.save if user.notification_email_changed?
+
+    respond_to do |format|
+      format.html { redirect_to :back, notice: "Successfully removed email." }
+      format.js { render nothing: true }
+    end
+  end
+
   protected
 
   def user
-    @user ||= User.find_by_username!(params[:id])
+    @user ||= User.find_by!(username: params[:id])
+  end
+
+  def user_params
+    params.require(:user).permit(
+      :email, :remember_me, :bio, :name, :username,
+      :skype, :linkedin, :twitter, :website_url, :color_scheme_id, :theme_id, :force_random_password,
+      :extern_uid, :provider, :password_expires_at, :avatar, :hide_no_ssh_key, :hide_no_password,
+      :projects_limit, :can_create_group, :admin, :key_id
+    )
   end
 end

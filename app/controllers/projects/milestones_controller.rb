@@ -1,6 +1,6 @@
 class Projects::MilestonesController < Projects::ApplicationController
   before_filter :module_enabled
-  before_filter :milestone, only: [:edit, :update, :destroy, :show]
+  before_filter :milestone, only: [:edit, :update, :destroy, :show, :sort_issues, :sort_merge_requests]
 
   # Allow read any milestone
   before_filter :authorize_read_milestone!
@@ -11,14 +11,14 @@ class Projects::MilestonesController < Projects::ApplicationController
   respond_to :html
 
   def index
-    @milestones = case params[:f]
+    @milestones = case params[:state]
                   when 'all'; @project.milestones.order("state, due_date DESC")
                   when 'closed'; @project.milestones.closed.order("due_date DESC")
-                  else @project.milestones.active.order("due_date DESC")
+                  else @project.milestones.active.order("due_date ASC")
                   end
 
     @milestones = @milestones.includes(:project)
-    @milestones = @milestones.page(params[:page]).per(20)
+    @milestones = @milestones.page(params[:page]).per(PER_PAGE)
   end
 
   def new
@@ -34,32 +34,28 @@ class Projects::MilestonesController < Projects::ApplicationController
     @issues = @milestone.issues
     @users = @milestone.participants.uniq
     @merge_requests = @milestone.merge_requests
-
-    respond_to do |format|
-      format.html
-      format.js
-    end
   end
 
   def create
-    @milestone = @project.milestones.new(params[:milestone])
-    @milestone.author_id_of_changes = current_user.id
+    @milestone = Milestones::CreateService.new(project, current_user, milestone_params).execute
 
     if @milestone.save
-      redirect_to project_milestone_path(@project, @milestone)
+      redirect_to namespace_project_milestone_path(@project.namespace,
+                                                   @project, @milestone)
     else
       render "new"
     end
   end
 
   def update
-    @milestone.update_attributes(params[:milestone].merge(author_id_of_changes: current_user.id))
+    @milestone = Milestones::UpdateService.new(project, current_user, milestone_params).execute(milestone)
 
     respond_to do |format|
       format.js
       format.html do
         if @milestone.valid?
-          redirect_to [@project, @milestone]
+          redirect_to namespace_project_milestone_path(@project.namespace,
+                                                   @project, @milestone)
         else
           render :edit
         end
@@ -73,15 +69,35 @@ class Projects::MilestonesController < Projects::ApplicationController
     @milestone.destroy
 
     respond_to do |format|
-      format.html { redirect_to project_milestones_path }
+      format.html { redirect_to namespace_project_milestones_path }
       format.js { render nothing: true }
     end
+  end
+
+  def sort_issues
+    @issues = @milestone.issues.where(id: params['sortable_issue'])
+    @issues.each do |issue|
+      issue.position = params['sortable_issue'].index(issue.id.to_s) + 1
+      issue.save
+    end
+
+    render json: { saved: true }
+  end
+
+  def sort_merge_requests
+    @merge_requests = @milestone.merge_requests.where(id: params['sortable_merge_request'])
+    @merge_requests.each do |merge_request|
+      merge_request.position = params['sortable_merge_request'].index(merge_request.id.to_s) + 1
+      merge_request.save
+    end
+
+    render json: { saved: true }
   end
 
   protected
 
   def milestone
-    @milestone ||= @project.milestones.find_by_iid!(params[:id])
+    @milestone ||= @project.milestones.find_by!(iid: params[:id])
   end
 
   def authorize_admin_milestone!
@@ -89,6 +105,12 @@ class Projects::MilestonesController < Projects::ApplicationController
   end
 
   def module_enabled
-    return render_404 unless @project.issues_enabled
+    unless @project.issues_enabled || @project.merge_requests_enabled
+      return render_404
+    end
+  end
+
+  def milestone_params
+    params.require(:milestone).permit(:title, :description, :due_date, :state_event)
   end
 end

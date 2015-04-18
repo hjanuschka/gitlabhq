@@ -1,27 +1,31 @@
 class Projects::CompareController < Projects::ApplicationController
   # Authorize
-  before_filter :authorize_read_project!
-  before_filter :authorize_code_access!
   before_filter :require_non_empty_project
+  before_filter :authorize_download_code!
 
   def index
   end
 
   def show
-    compare = Gitlab::Git::Compare.new(@repository.raw_repository, params[:from], params[:to])
+    base_ref = params[:from]
+    head_ref = params[:to]
 
-    @commits       = compare.commits
-    @commit        = compare.commit
-    @diffs         = compare.diffs
-    @refs_are_same = compare.same
-    @line_notes    = []
+    compare_result = CompareService.new.execute(
+      current_user,
+      @project,
+      head_ref,
+      @project,
+      base_ref
+    )
 
-    diff_line_count = Commit::diff_line_count(@diffs)
-    @suppress_diff = Commit::diff_suppress?(@diffs, diff_line_count) && !params[:force_show_diff]
-    @force_suppress_diff = Commit::diff_force_suppress?(@diffs, diff_line_count)
+    @commits = compare_result.commits
+    @diffs = compare_result.diffs
+    @commit = @commits.last
+    @line_notes = []
   end
 
   def create
-    redirect_to project_compare_path(@project, params[:from], params[:to])
+    redirect_to namespace_project_compare_path(@project.namespace, @project,
+                                               params[:from], params[:to])
   end
 end
